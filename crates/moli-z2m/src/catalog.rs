@@ -8,6 +8,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::adapt::{self, Adapter};
+
 use moli_core::{Access, Device, DeviceId, InstanceId, Kind, PointSpec, Semantic, Unit, Value};
 use serde::Deserialize;
 use serde_json::{Map, Value as Json};
@@ -41,6 +43,8 @@ pub struct Entry {
     /// Mains-powered (router): always listening, can be read on demand.
     pub mains: bool,
     codecs: HashMap<Arc<str>, Codec>,
+    /// The Moli cards this device has (shutter, air-conditioner), see `adapt`.
+    adapter: Adapter,
 }
 
 /// All devices of one Z2M bridge, indexed by IEEE address (identity) and by
@@ -52,12 +56,21 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// Rebuilds the catalog from a `bridge/devices` payload.
-    pub fn from_bridge_devices(instance: &InstanceId, payload: &[u8]) -> serde_json::Result<Self> {
+    /// Rebuilds the catalog from a `bridge/devices` payload, leaving out the
+    /// models listed in `exclude_models` (Z2M `definition.model`).
+    pub fn from_bridge_devices(
+        instance: &InstanceId,
+        payload: &[u8],
+        exclude_models: &[String],
+    ) -> serde_json::Result<Self> {
         let raw: Vec<RawDevice> = serde_json::from_slice(payload)?;
         let entries: HashMap<String, Entry> = raw
             .into_iter()
             .filter(|d| d.kind != "Coordinator" && !d.disabled)
+            .filter(|d| {
+                let model = d.definition.as_ref().and_then(|def| def.model.as_ref());
+                !model.is_some_and(|m| exclude_models.contains(m))
+            })
             .map(|d| {
                 let entry = Entry::from_raw(instance, d);
                 (entry.ieee.clone(), entry)
@@ -103,6 +116,8 @@ impl Entry {
         for expose in &definition.exposes {
             flatten(expose, "", &mut points, &mut codecs);
         }
+        let adapter = adapt::detect(&points);
+        points.extend(adapt::points(adapter));
         let device = Device {
             id: DeviceId::new(instance, &raw.ieee_address),
             instance: instance.clone(),
@@ -120,6 +135,7 @@ impl Entry {
             device,
             mains: raw.kind == "Router",
             codecs,
+            adapter,
         }
     }
 
@@ -145,7 +161,8 @@ impl Entry {
     /// Unknown properties (`update`, `last_seen`…) are ignored.
     #[must_use]
     pub fn decode(&self, payload: &Map<String, Json>) -> Vec<(Arc<str>, Value)> {
-        self.device
+        let mut states: Vec<(Arc<str>, Value)> = self
+            .device
             .points
             .iter()
             .filter_map(|point| {
@@ -166,7 +183,22 @@ impl Entry {
                 };
                 Some((point.key.clone(), value))
             })
-            .collect()
+            .collect();
+        states.extend(adapt::decode(self.adapter, payload));
+        states
+    }
+
+    /// A write on one of the Moli points added by `adapt` (shutter, air
+    /// conditioner). `None`: a plain Z2M point, see [`Self::encode`]. `mode` is
+    /// the unit's last known mode.
+    #[must_use]
+    pub fn encode_moli(
+        &self,
+        key: &str,
+        value: &Value,
+        mode: Option<&str>,
+    ) -> Option<Result<Json, String>> {
+        adapt::encode(self.adapter, key, value, mode)
     }
 
     /// Encodes a validated write as the `{friendly_name}/set` payload.
@@ -240,8 +272,18 @@ fn flatten(
             ("composite", Some(p)) => format!("{prefix}{p}."),
             _ => prefix.to_owned(),
         };
+        let first = points.len();
         for feature in &expose.features {
             flatten(feature, &prefix, points, codecs);
+        }
+        // A lock's state is true when locked: not a switch to turn off (the guard asks a
+        // person before an agent opens it).
+        if expose.kind == "lock" {
+            for point in &mut points[first..] {
+                if point.kind == Kind::Binary && &*point.key == "state" {
+                    point.semantic = Semantic::Lock;
+                }
+            }
         }
         return;
     }
@@ -412,8 +454,20 @@ mod tests {
         Catalog::from_bridge_devices(
             &InstanceId::from("z2m"),
             include_bytes!("../../../integrations/z2m/fixtures/bridge_devices.json"),
+            &[],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn excluded_models_are_left_out() {
+        let all = catalog();
+        let model = all.entries().next().unwrap().device.model.clone().unwrap();
+        let payload = include_bytes!("../../../integrations/z2m/fixtures/bridge_devices.json");
+        let without =
+            Catalog::from_bridge_devices(&InstanceId::from("z2m"), payload, &[model.to_string()])
+                .unwrap();
+        assert!(without.len() < all.len());
     }
 
     fn state(ieee: &str) -> Map<String, Json> {
@@ -582,6 +636,7 @@ mod tests {
                 points,
             },
             codecs,
+            adapter: Adapter::None,
         };
         let decoded: HashMap<_, _> = entry
             .decode(json!({"mode": 1}).as_object().unwrap())
@@ -616,6 +671,7 @@ mod tests {
                 members: Vec::new(),
                 points,
             },
+            adapter: Adapter::None,
             codecs,
         }
     }
@@ -776,6 +832,21 @@ mod tests {
     }
 
     #[test]
+    fn a_locks_state_is_a_lock_not_a_switch() {
+        let expose: RawExpose = serde_json::from_value(json!({
+            "type": "lock",
+            "features": [
+                {"type": "binary", "property": "state", "access": 7, "value_on": "LOCK", "value_off": "UNLOCK"}
+            ]
+        }))
+        .unwrap();
+        let mut points = Vec::new();
+        let mut codecs = HashMap::new();
+        flatten(&expose, "", &mut points, &mut codecs);
+        assert_eq!(points[0].semantic, Semantic::Lock);
+    }
+
+    #[test]
     fn composite_keys_round_trip() {
         let expose: RawExpose = serde_json::from_value(json!({
             "type": "light",
@@ -815,6 +886,7 @@ mod tests {
                 points,
             },
             codecs,
+            adapter: Adapter::None,
         };
         assert_eq!(
             entry.encode("color.x", &Value::Float(0.3)),

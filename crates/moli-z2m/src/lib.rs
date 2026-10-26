@@ -4,13 +4,14 @@
 //! messages to values and availability messages to online flags, and turns
 //! commands into `{friendly_name}/set` publications.
 
+mod adapt;
 mod catalog;
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use anyhow::Context as _;
-use moli_core::DeviceId;
+use moli_core::{DeviceId, Value};
 use moli_runtime::{BoxFuture, CommandRequest, Driver, DriverCtx};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, Publish, QoS};
 use serde::Deserialize;
@@ -35,6 +36,20 @@ pub struct Config {
     pub password_env: Option<String>,
     #[serde(default)]
     pub client_id: Option<String>,
+    /// Friendly names Moli may command. Absent: every device. Empty: none
+    /// (Moli only listens, e.g. next to another controller of the same bridge).
+    #[serde(default)]
+    pub writable: Option<Vec<String>>,
+    /// Z2M models Moli ignores altogether (e.g. a double switch whose two
+    /// buttons it cannot model yet).
+    #[serde(default)]
+    pub exclude_models: Vec<String>,
+    /// Air conditioner (friendly name) → the sensor (friendly name) whose
+    /// temperature and humidity it shows. The temperature probe of an IR
+    /// controller sits in its holder, near the unit's heat: it reads several
+    /// degrees high and its humidity far too low.
+    #[serde(default)]
+    pub climate_sensors: HashMap<String, String>,
 }
 
 fn default_host() -> String {
@@ -111,7 +126,7 @@ async fn run(config: &Config, ctx: &mut DriverCtx) -> anyhow::Result<()> {
                     ctx.ready();
                 }
                 Event::Incoming(Packet::Publish(publish)) => {
-                    let reloaded = on_publish(ctx, base, &mut catalog, &publish);
+                    let reloaded = on_publish(ctx, base, &mut catalog, config, &publish);
                     if reloaded {
                         queue_reads(base, &catalog, &mut read_done, &mut reads);
                     }
@@ -127,7 +142,7 @@ async fn run(config: &Config, ctx: &mut DriverCtx) -> anyhow::Result<()> {
             },
             command = ctx.next_command() => match command {
                 Some(command) if !connected => command.reply(Err(UNREACHABLE.into())),
-                Some(command) => on_command(&client, base, &catalog, command),
+                Some(command) => on_command(ctx, &client, base, &catalog, config.writable.as_deref(), command),
                 None => return Ok(()),
             },
         }
@@ -135,7 +150,13 @@ async fn run(config: &Config, ctx: &mut DriverCtx) -> anyhow::Result<()> {
 }
 
 /// Handles one message. Returns `true` when the catalog was reloaded.
-fn on_publish(ctx: &DriverCtx, base: &str, catalog: &mut Catalog, publish: &Publish) -> bool {
+fn on_publish(
+    ctx: &DriverCtx,
+    base: &str,
+    catalog: &mut Catalog,
+    config: &Config,
+    publish: &Publish,
+) -> bool {
     let Some(rest) = publish
         .topic
         .strip_prefix(base)
@@ -144,9 +165,16 @@ fn on_publish(ctx: &DriverCtx, base: &str, catalog: &mut Catalog, publish: &Publ
         return false;
     };
     if rest == "bridge/devices" {
-        return match Catalog::from_bridge_devices(ctx.instance(), &publish.payload) {
+        return match Catalog::from_bridge_devices(
+            ctx.instance(),
+            &publish.payload,
+            &config.exclude_models,
+        ) {
             Ok(fresh) => {
                 apply_catalog(ctx, catalog, fresh);
+                for (clim, sensor) in &config.climate_sensors {
+                    lend(ctx, catalog, clim, sensor);
+                }
                 true
             }
             Err(e) => {
@@ -168,13 +196,41 @@ fn on_publish(ctx: &DriverCtx, base: &str, catalog: &mut Catalog, publish: &Publ
         return false;
     };
     if let Ok(serde_json::Value::Object(payload)) = serde_json::from_slice(&publish.payload) {
+        let borrows = config.climate_sensors.contains_key(&entry.friendly_name);
         for (key, value) in entry.decode(&payload) {
+            if borrows && BORROWED.contains(&&*key) {
+                continue; // the controller's own probe is not trusted
+            }
             ctx.set_state(&entry.device.id, &key, value);
+        }
+        for (clim, sensor) in &config.climate_sensors {
+            if *clim == entry.friendly_name || *sensor == entry.friendly_name {
+                lend(ctx, catalog, clim, sensor);
+            }
         }
     } else {
         tracing::debug!(topic = %publish.topic, "non-object state payload ignored");
     }
     false
+}
+
+/// What an air conditioner takes from its room sensor (`climate_sensors`).
+const BORROWED: [&str; 3] = ["temperature", "local_temperature", "humidity"];
+
+/// Copies the sensor's last temperature and humidity onto the air conditioner.
+fn lend(ctx: &DriverCtx, catalog: &Catalog, clim: &str, sensor: &str) {
+    let (Some(clim), Some(sensor)) = (catalog.by_name(clim), catalog.by_name(sensor)) else {
+        return;
+    };
+    for (own, from) in [
+        ("temperature", "temperature"),
+        ("local_temperature", "temperature"),
+        ("humidity", "humidity"),
+    ] {
+        if let Some(value) = ctx.current(&sensor.device.id, from) {
+            ctx.set_state(&clim.device.id, own, value);
+        }
+    }
 }
 
 /// Z2M does not replay known states to new subscribers. Listening
@@ -201,6 +257,13 @@ const READ_PACE: Duration = Duration::from_millis(500);
 
 /// Answer to a command received while the broker is not connected.
 const UNREACHABLE: &str = "broker injoignable";
+
+/// Answer to a command on a device outside the `writable` list.
+const READ_ONLY: &str = "appareil en lecture seule (options.writable)";
+
+fn is_writable(writable: Option<&[String]>, friendly_name: &str) -> bool {
+    writable.is_none_or(|names| names.iter().any(|n| n == friendly_name))
+}
 
 /// Our own (and others') requests to Z2M echo back through `#`.
 fn is_request(rest: &str) -> bool {
@@ -236,12 +299,35 @@ fn apply_catalog(ctx: &DriverCtx, current: &mut Catalog, fresh: Catalog) {
     *current = fresh;
 }
 
-fn on_command(client: &AsyncClient, base: &str, catalog: &Catalog, command: CommandRequest) {
+fn on_command(
+    ctx: &DriverCtx,
+    client: &AsyncClient,
+    base: &str,
+    catalog: &Catalog,
+    writable: Option<&[String]>,
+    command: CommandRequest,
+) {
     let Some(entry) = catalog.by_id(&command.device.id) else {
         command.reply(Err("device no longer known to zigbee2mqtt".into()));
         return;
     };
-    let payload = entry.encode(&command.key, &command.value).to_string();
+    if !is_writable(writable, &entry.friendly_name) {
+        command.reply(Err(READ_ONLY.into()));
+        return;
+    }
+    let mode = match ctx.current(&entry.device.id, "mode") {
+        Some(Value::Text(mode)) => Some(mode),
+        _ => None,
+    };
+    let payload = match entry.encode_moli(&command.key, &command.value, mode.as_deref()) {
+        Some(Ok(payload)) => payload,
+        Some(Err(e)) => {
+            command.reply(Err(e));
+            return;
+        }
+        None => entry.encode(&command.key, &command.value),
+    }
+    .to_string();
     let topic = format!("{base}/{}/set", entry.friendly_name);
     tracing::debug!(%topic, %payload, "publish command");
     let result = client
@@ -268,6 +354,22 @@ mod tests {
         assert!(is_request("lamp/set/state"));
         assert!(is_request("lamp/get"));
         assert!(!is_request("salon/lamp"));
+    }
+
+    #[test]
+    fn writable_list() {
+        let names = ["lamp".to_owned()];
+        assert!(is_writable(None, "any"));
+        assert!(is_writable(Some(&names), "lamp"));
+        assert!(!is_writable(Some(&names), "other"));
+        assert!(!is_writable(Some(&[]), "lamp"));
+    }
+
+    #[test]
+    fn climate_sensors_are_read_from_the_config() {
+        let config: Config = toml_like(r#"{"climate_sensors": {"Clim": "Capteur"}}"#);
+        assert_eq!(config.climate_sensors["Clim"], "Capteur");
+        assert!(toml_like("{}").climate_sensors.is_empty());
     }
 
     #[test]
