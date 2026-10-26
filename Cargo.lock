@@ -1487,6 +1487,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "moli-matter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "moli-core",
+ "moli-i18n",
+ "moli-net",
+ "moli-runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "moli-moonraker"
 version = "0.1.0"
 dependencies = [
@@ -1551,6 +1566,7 @@ dependencies = [
  "moli-ipp",
  "moli-izypower",
  "moli-lights",
+ "moli-matter",
  "moli-moonraker",
  "moli-net",
  "moli-philips",
@@ -1814,6 +1830,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "moli-core",
+ "moli-i18n",
  "moli-runtime",
  "rumqttc",
  "serde",

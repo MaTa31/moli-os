@@ -1,0 +1,28 @@
+[integration]
+id = "matter"
+name = "Matter (via un serveur Matter)"
+# Any Matter node the server holds: lights and basic sensors, no list per brand.
+brands = []
+models = []
+transport = "tcp"
+driver = "matter"
+crate = "moli-matter"
+
+[discovery]
+mdns = []
+ssdp = []
+# The Matter server's websocket.
+ports = [5580]
+
+[needs]
+secrets = []
+vars = []
+options = []
+
+[origin]
+reused = "protocole WebSocket du Matter server (python-matter-server et matter.js) : start_listening, attribute_updated, node_updated"
+author = "agent"
+
+# Replayed by the crate's tests (crates/moli-matter/src/map.rs).
+[[fixture]]
+file = "fixtures/nodes.json"

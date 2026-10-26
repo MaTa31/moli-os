@@ -538,5 +538,20 @@
   "pilotes.solarman.lecture_seule": "the inverter is read only, it takes no orders",
   "pilotes.solarman.fuseau_inconnu": "unknown time zone: \"{timezone}\" (for example Europe/Paris)",
   "pilotes.solarman.numero_inconnu": "the logger's serial number is unknown: {host} does not answer discovery (at night the inverter sleeps); give it in the \"serial\" option (logger sticker or Solarman app)",
-  "pilotes.solarman.pas_un_micro": "the device behind this logger is not a Deye micro-inverter: not supported yet"
+  "pilotes.solarman.pas_un_micro": "the device behind this logger is not a Deye micro-inverter: not supported yet",
+  "pilotes.matter.etat": "State",
+  "pilotes.matter.luminosite": "Brightness",
+  "pilotes.matter.temperature_couleur": "Color temperature",
+  "pilotes.matter.temperature": "Temperature",
+  "pilotes.matter.humidite": "Humidity",
+  "pilotes.matter.eclairement": "Illuminance",
+  "pilotes.matter.presence": "Occupancy",
+  "pilotes.matter.contact": "Contact",
+  "pilotes.matter.couleur": "Color",
+  "pilotes.z2m.commande": "Command",
+  "pilotes.z2m.ouverture": "Opening",
+  "pilotes.z2m.marche": "Power",
+  "pilotes.z2m.mode": "Mode",
+  "pilotes.z2m.consigne": "Setpoint",
+  "pilotes.z2m.temperature": "Temperature"
 }

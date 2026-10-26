@@ -133,6 +133,9 @@ base_topic = "zigbee2mqtt"  # défaut
 # username = "moli-os"
 # password_env = "MOLI_Z2M_PASSWORD"   # NOM de la variable, jamais le mot de passe
 # client_id = "…"                      # défaut : moli-os-<instance>
+# writable = ["Lampe du jardin"]       # noms (friendly names) que Moli peut commander ; absent = tous, [] = aucun (Moli écoute seulement)
+# climate_sensors = { "Clim salon" = "Capteur salon" }   # une clim IR affiche la température et l'humidité d'un capteur de la pièce (sa sonde, dans le support, lit trop haut)
+# exclude_models = ["MINI-ZB2GS-L"]    # modèles Z2M ignorés (absents de Moli) ; défaut : aucun
 ```
 
 - **Secrets** : mot de passe MQTT éventuel dans la variable d'environnement nommée par `password_env`.
@@ -141,6 +144,39 @@ base_topic = "zigbee2mqtt"  # défaut
 - **Découverte** : chaque nouveau `bridge/devices` recharge le catalogue (appareils disparus retirés ; coordinateur et appareils désactivés exclus). Disponibilité via `<nom>/availability` (`{"state":"online"}` ou `online`).
 - **Pièges** : Z2M ne rejoue pas les états aux nouveaux abonnés. Les appareils sur secteur (routeurs) sont donc interrogés une fois par exécution via `/get`, un toutes les 500 ms pour ne pas saturer le réseau ; les appareils endormis restent couverts par le cache d'état du hub. Taille de paquet portée à 4 Mio (`bridge/devices` grossit avec le réseau). Les propres `/set` et `/get` de Moli reviennent par `#` : ignorés. Une commande reçue avant que le broker ait accepté la connexion (`ConnAck`) est **refusée** (`broker injoignable`) au lieu d'être acquittée puis perdue ; toute erreur de connexion termine l'exécution (le superviseur vide la file et reconnecte).
 - **Tests** : `src/catalog.rs` sur des fixtures réelles `integrations/z2m/fixtures/bridge_devices.json` (7 appareils) et `state.json` : typage, décodage, encodage des commandes, composites, lectures à la demande.
+
+### Matter (`moli-matter`)
+
+Client d'un **Matter server** (python-matter-server ou matter.js) : le serveur garde la fabric et
+les sessions avec les appareils, Moli l'écoute par son WebSocket (`start_listening`, puis
+`attribute_updated`, `node_updated`, `node_removed`). Aucune session Matter propre : une lampe qui a
+déjà un contrôleur ne reçoit aucune charge de plus. Les commandes passent par `device_command` du serveur (`On`/`Off`, `MoveToLevelWithOnOff`, `MoveToColorTemperature`, `MoveToColor`).
+
+```toml
+[[driver]]
+id = "matter"
+kind = "matter"
+
+[driver.options]
+host = "127.0.0.1"   # défaut ; le serveur écoute sur le port 5580 (défaut)
+# port = 5580
+# writable = [2, 4]            # numéros de nœuds commandables ; absent = tous, [] = aucun
+# color_temp_k = [2700, 6500]   # kelvin, plus chaud puis plus froid : plage réelle des lampes sans profil
+#
+# Un profil par modèle (`ProductName` Matter) : ce que la lampe fait vraiment, d'après le fabricant.
+# [driver.options.models.H61E6]
+# color_temp_k = [2000, 9000]
+```
+
+- **Points** : une table cluster/attribut (`src/map.rs`) : état (6/0), luminosité (8/0),
+  température de couleur (768/7), couleur (768/3 et 768/4 réunis en `#rrggbb`), température, humidité,
+  éclairement, présence, contact. Mêmes conventions que Hue : **luminosité en pourcentage** (le niveau
+  Matter 0-254 est converti, comme l'API officielle de Govee 1-100), couleur en `#rrggbb`, température de
+  couleur en mireds. Autre endpoint que le 1 : préfixe `e<n>_`.
+- **Identité** : numéro de nœud. Nom : `NodeLabel`, sinon produit + numéro. Pas de pièce dans Matter :
+  étiquettes de Moli.
+- **Température de couleur** : bornée à la plage du modèle (`models`, sinon `color_temp_k`), pour le point et la commande : des lampes Wi-Fi annoncent 15-6535 K alors que la plage réelle est 2700-6500 K, et hors plage elles s'éteignent presque.
+- **Tests** : `src/map.rs` sur `integrations/matter/fixtures/nodes.json` (9 lampes réelles) : points, valeurs, accès selon `writable`, encodage des commandes.
 
 ## `hue` : Philips Hue (`crates/moli-hue`)
 
