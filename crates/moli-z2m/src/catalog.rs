@@ -298,7 +298,10 @@ fn flatten(
     // A calibration offset in °C is configuration, not a temperature reading.
     // A lock's state (`LOCK`/`UNLOCK`, Z2M's `lock` expose) is no switch: `true` is
     // locked, and the guard asks a person before an agent opens it.
+    // Only the state itself (`state`, `state_l1`…): a plug's `child_lock` is
+    // LOCK/UNLOCK too, and it locks the plug's button, not a door.
     let lock = expose.kind == "binary"
+        && (&**property == "state" || property.starts_with("state_"))
         && expose.value_on.as_ref().and_then(Json::as_str) == Some("LOCK")
         && expose.value_off.as_ref().and_then(Json::as_str) == Some("UNLOCK");
     let semantic = if expose.category.as_deref() == Some("config") {
@@ -671,6 +674,16 @@ mod tests {
             {"type": "binary", "name": "state", "property": "state", "access": 7,
              "value_on": "ON", "value_off": "OFF"}]}));
         assert_eq!(plug.device.points[0].semantic, Semantic::OnOff);
+        // A plug's child lock (LOCK/UNLOCK too) locks its button, not a door:
+        // the plug stays a plug to the guard.
+        let catalog = catalog();
+        let plug = catalog.by_name("0x00124b0000000009").unwrap();
+        let child_lock = plug.device.point("child_lock").unwrap();
+        assert_ne!(child_lock.semantic, Semantic::Lock);
+        assert_eq!(
+            moli_runtime::opener(&["Prise salon"], &plug.device.points),
+            moli_runtime::Opener::None
+        );
     }
 
     #[test]
