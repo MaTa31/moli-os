@@ -1146,3 +1146,59 @@ async fn an_agent_opening_a_garage_door_or_a_lock_waits_for_a_person() {
         .await;
     assert!(plain.is_ok(), "{plain:?}");
 }
+
+#[tokio::test]
+async fn a_device_only_named_after_the_garage_or_with_lock_inside_a_word_is_not_held() {
+    let (hub, _cancel) = start(false).await;
+    let plug = moli_core::DeviceId::from("fake:plug1");
+    for name in [
+        "Prise garage",
+        "Lumière garage",
+        "Radiateur garage",
+        "Clock",
+    ] {
+        let patch = moli_runtime::LabelPatch {
+            name: Some(name.into()),
+            room: None,
+        };
+        hub.set_label(&plug, patch, Origin::Ui, None).await.unwrap();
+        for value in [true, false] {
+            let sent = hub
+                .command(&point("state"), Value::Bool(value), Origin::Household, None)
+                .await;
+            assert!(sent.is_ok(), "{name} {value}: {sent:?}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_routine_that_opens_is_held_for_the_dashboard_without_a_code() {
+    let (hub, _cancel) = start(false).await;
+    let plug = moli_core::DeviceId::from("fake:plug1");
+    let named = |name: &str| moli_runtime::LabelPatch {
+        name: Some(name.into()),
+        room: None,
+    };
+    hub.set_label(&plug, named("Porte de garage"), Origin::Ui, None)
+        .await
+        .unwrap();
+    let state = point("state");
+    let open = Value::Bool(true);
+    let close = Value::Bool(false);
+    assert!(
+        hub.would_hold(&state, Some(&open), Origin::Household)
+            .is_some()
+    );
+    assert!(
+        hub.would_hold(&state, Some(&close), Origin::Household)
+            .is_none()
+    );
+    // A toggle may open: held.
+    assert!(hub.would_hold(&state, None, Origin::Household).is_some());
+    // A person's session decides alone.
+    assert!(hub.would_hold(&state, Some(&open), Origin::Ui).is_none());
+    hub.set_label(&plug, named("Prise du salon"), Origin::Ui, None)
+        .await
+        .unwrap();
+    assert!(hub.would_hold(&state, None, Origin::Household).is_none());
+}

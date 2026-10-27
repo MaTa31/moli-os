@@ -104,7 +104,7 @@ numérotés `d1…dN` et leurs points) et les 25 outils du contrat (`tools/model
   montrés au modèle ni commandés depuis la conversation ; un ordre « pour plus tard » n'est exécuté que
   par `schedule` ou `remind` ; un appareil d'une autre pièce que celle que la personne a nommée n'est pas
   commandé ; ouvrir une serrure, une porte de garage ou un portail attend toujours la validation d'une
-  personne (garde du hub), quelle que soit la pièce ; fermer passe.
+  personne (garde du hub), quelle que soit la pièce ; fermer passe (règle détaillée dans `SECURITY.md`).
 - **Hors du cadre de la maison** (une blague, une explication), l'outil `delegate` répond « pas encore
   disponible » : rien ne quitte la maison tant que la délégation (#17) n'a pas de forme décidée.
 - **Configuration** : les outils `rename_device`, `move_device`, `set_device_enabled`, `rename_room`,

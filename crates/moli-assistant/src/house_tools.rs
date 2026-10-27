@@ -78,23 +78,16 @@ pub(crate) fn wake_order(v: &DeviceView, key: &str, value: &Json) -> Option<(Str
 
 pub(crate) fn family_of(v: &DeviceView) -> Family {
     let name = norm(name_of(v));
-    // What opens the house, and the house's own switches (helpers: « Alarme », « Mode vacances »),
-    // are never part of « tous les volets » or « toutes les prises ».
-    let lock = v.device.points.iter().any(|p| p.semantic == Semantic::Lock);
-    let opening = [
-        "garage",
-        "portail",
-        "portillon",
-        "gate",
-        "serrure",
-        "verrou",
-        "lock",
-    ]
-    .iter()
-    .any(|w| name.contains(w));
+    // What opens the house (the guard's own reading: a lock's point, else its names), and the
+    // house's own switches (helpers: « Alarme », « Mode vacances »), are never part of
+    // « tous les volets » or « toutes les prises ».
+    let names: Vec<&str> = std::iter::once(&*v.device.native_name)
+        .chain(v.label.name.as_deref())
+        .collect();
+    let opens = moli_runtime::opener(&names, &v.device.points) != moli_runtime::Opener::None;
     let helper = v.device.model.as_deref() == Some("Aide")
         && v.device.manufacturer.as_deref() == Some("Moli");
-    if lock || opening || helper {
+    if opens || helper {
         return Family::Other;
     }
     let control_closes = v.device.points.iter().any(|p| {
