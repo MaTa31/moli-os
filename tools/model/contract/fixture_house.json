@@ -1,0 +1,220 @@
+{
+  "date": "2026-10-17",
+  "layout": {
+    "rooms": [
+      {
+        "name": "Salon"
+      },
+      {
+        "name": "Cuisine"
+      },
+      {
+        "name": "Chambre 1"
+      }
+    ]
+  },
+  "protected": [
+    "Chambre 1"
+  ],
+  "devices": [
+    {
+      "id": "z2m:plafonnier_salon_1",
+      "instance": "z2m",
+      "native_name": "Plafonnier",
+      "native_room": "Salon",
+      "points": [
+        {
+          "key": "state",
+          "label": "state",
+          "kind": {
+            "type": "binary"
+          },
+          "access": {
+            "read": true,
+            "write": true
+          },
+          "semantic": "on_off"
+        },
+        {
+          "key": "brightness",
+          "label": "brightness",
+          "kind": {
+            "type": "numeric",
+            "min": 0.0,
+            "max": 100.0
+          },
+          "access": {
+            "read": true,
+            "write": true
+          },
+          "unit": "%",
+          "semantic": "brightness"
+        }
+      ],
+      "state": {
+        "state": {
+          "value": false,
+          "ts": 1
+        },
+        "brightness": {
+          "value": 60,
+          "ts": 1
+        }
+      }
+    },
+    {
+      "id": "z2m:clim_salon_1",
+      "instance": "z2m",
+      "native_name": "Climatisation",
+      "native_room": "Salon",
+      "points": [
+        {
+          "key": "mode",
+          "label": "mode",
+          "kind": {
+            "type": "enum",
+            "values": [
+              "auto",
+              "froid",
+              "chaud"
+            ]
+          },
+          "access": {
+            "read": true,
+            "write": true
+          },
+          "semantic": "config"
+        },
+        {
+          "key": "temperature",
+          "label": "temperature",
+          "kind": {
+            "type": "numeric"
+          },
+          "access": {
+            "read": true,
+            "write": false
+          },
+          "unit": "°C",
+          "semantic": "temperature"
+        }
+      ],
+      "state": {
+        "mode": {
+          "value": "froid",
+          "ts": 1
+        },
+        "temperature": {
+          "value": 22.5,
+          "ts": 1
+        }
+      }
+    },
+    {
+      "id": "z2m:prise_cuisine_1",
+      "instance": "z2m",
+      "native_name": "Machine à café",
+      "native_room": "Cuisine",
+      "online": false,
+      "points": [
+        {
+          "key": "state",
+          "label": "state",
+          "kind": {
+            "type": "binary"
+          },
+          "access": {
+            "read": true,
+            "write": true
+          },
+          "semantic": "on_off"
+        }
+      ],
+      "state": {
+        "state": {
+          "value": true,
+          "ts": 1
+        }
+      }
+    },
+    {
+      "id": "z2m:plafonnier_chambre_1",
+      "instance": "z2m",
+      "native_name": "Plafonnier",
+      "native_room": "Chambre 1",
+      "points": [
+        {
+          "key": "state",
+          "label": "state",
+          "kind": {
+            "type": "binary"
+          },
+          "access": {
+            "read": true,
+            "write": true
+          },
+          "semantic": "on_off"
+        }
+      ],
+      "state": {
+        "state": {
+          "value": false,
+          "ts": 1
+        }
+      }
+    },
+    {
+      "id": "z2m:capteur_sans_piece",
+      "instance": "z2m",
+      "native_name": "Capteur",
+      "points": [
+        {
+          "key": "humidity",
+          "label": "humidity",
+          "kind": {
+            "type": "numeric"
+          },
+          "access": {
+            "read": true,
+            "write": false
+          },
+          "unit": "%",
+          "semantic": "humidity"
+        }
+      ],
+      "state": {
+        "humidity": {
+          "value": 63,
+          "ts": 1
+        }
+      }
+    },
+    {
+      "id": "z2m:camera_salon_1",
+      "instance": "z2m",
+      "native_name": "Caméra",
+      "native_room": "Salon",
+      "camera": true,
+      "points": [
+        {
+          "key": "motion",
+          "label": "motion",
+          "kind": {
+            "type": "binary"
+          },
+          "access": {
+            "read": true,
+            "write": false
+          },
+          "semantic": "occupancy"
+        }
+      ],
+      "state": {
+        "motion": {
+          "value": false,
+          "ts": 1
+        }
+      }
+    }
+  ]
+}

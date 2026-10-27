@@ -497,7 +497,7 @@ impl Hub {
         }
         let result = match self.prepare(point, &value) {
             Err(e) => Err(e),
-            Ok(prepared) => match self.verdict(point, origin) {
+            Ok(prepared) => match self.verdict_for(point, &value, origin) {
                 Verdict::Allow => self.send(prepared).await,
                 Verdict::Approval(reason) => {
                     let id = self.hold(point, &value, origin, actor.clone(), &reason);
@@ -555,6 +555,42 @@ impl Hub {
             .opts
             .guard
             .check(&rooms, origin, jiff::Timestamp::now())
+    }
+
+    /// The verdict on this very order: opening a lock, a garage door or a gate is a
+    /// person's call, whatever the room (closing is not); then the point's verdict.
+    fn verdict_for(&self, point: &PointId, value: &Value, origin: Origin) -> Verdict {
+        let agent = !matches!(origin, Origin::Ui | Origin::System | Origin::Automation);
+        if agent && self.opens(point, value) {
+            return Verdict::Approval(moli_i18n::tr!("serveur.garde.ouverture"));
+        }
+        self.verdict(point, origin)
+    }
+
+    /// Whether an order opens the way into the house (see [`opening`]).
+    fn opens(&self, point: &PointId, value: &Value) -> bool {
+        let Some((device, key)) = point.split() else {
+            return false;
+        };
+        let model = self.read();
+        let Some(d) = model.devices.get(&device) else {
+            return false;
+        };
+        let name = model
+            .labels
+            .get(&device)
+            .and_then(|l| l.name.clone())
+            .unwrap_or_else(|| d.native_name.to_string());
+        let semantic = d.point(key).map(|p| p.semantic);
+        let light = d.points.iter().any(|p| {
+            matches!(
+                p.semantic,
+                moli_core::Semantic::Brightness
+                    | moli_core::Semantic::Color
+                    | moli_core::Semantic::ColorTemp
+            )
+        });
+        opening(&name, key, semantic, light, value)
     }
 
     /// Whether the point is an order to a machine at work.
@@ -1668,5 +1704,117 @@ impl Model {
             camera: self.snapshots.contains_key(&device.id),
             printer: self.printers.contains_key(&device.id),
         }
+    }
+}
+
+/// Whether an order opens a lock, a garage door or a gate. A lock's state (`Semantic::Lock`) opens on
+/// `false`; a lock known by its name only, on any change (its true/false is not the same everywhere); a
+/// garage door or a gate on `true`, a position above zero, « open », « unlock ». A light named after the
+/// garage is a light: it never asks.
+pub(crate) fn opening(
+    name: &str,
+    key: &str,
+    semantic: Option<moli_core::Semantic>,
+    light: bool,
+    value: &Value,
+) -> bool {
+    const LOCKS: [&str; 4] = ["serrure", "verrou", "lock", "cadenas"];
+    const GATES: [&str; 4] = ["garage", "portail", "gate", "portillon"];
+    let name = name.to_lowercase();
+    let opening_word = |t: &str| {
+        let t = t.to_lowercase();
+        [
+            "open",
+            "unlock",
+            "ouvr",
+            "ouvert",
+            "deverrouill",
+            "déverrouill",
+            "toggle",
+        ]
+        .iter()
+        .any(|w| t.contains(w))
+    };
+    if semantic == Some(moli_core::Semantic::Lock) {
+        return match value {
+            Value::Bool(locked) => !locked,
+            Value::Text(t) => opening_word(t),
+            _ => false,
+        };
+    }
+    if light {
+        return false;
+    }
+    let lock = key == "lock" || LOCKS.iter().any(|w| name.contains(w));
+    let gate = GATES.iter().any(|w| name.contains(w));
+    match value {
+        Value::Text(t) => (lock || gate) && opening_word(t),
+        Value::Bool(on) => lock || (gate && *on),
+        Value::Int(n) => gate && *n > 0,
+        Value::Float(n) => gate && *n > 0.0,
+        Value::Null => false,
+    }
+}
+
+#[cfg(test)]
+mod opening_tests {
+    use super::*;
+    use moli_core::Semantic;
+
+    #[test]
+    fn a_lock_opens_on_false_and_closes_freely() {
+        assert!(opening(
+            "Porte d'entrée",
+            "state",
+            Some(Semantic::Lock),
+            false,
+            &Value::Bool(false)
+        ));
+        assert!(!opening(
+            "Porte d'entrée",
+            "state",
+            Some(Semantic::Lock),
+            false,
+            &Value::Bool(true)
+        ));
+    }
+
+    #[test]
+    fn a_light_named_after_the_garage_never_asks() {
+        assert!(!opening(
+            "Lumière garage",
+            "state",
+            Some(Semantic::OnOff),
+            true,
+            &Value::Bool(true)
+        ));
+        assert!(!opening(
+            "Spot portail",
+            "brightness",
+            Some(Semantic::Brightness),
+            true,
+            &Value::Int(80)
+        ));
+        assert!(opening(
+            "Porte de garage",
+            "state",
+            Some(Semantic::OnOff),
+            false,
+            &Value::Bool(true)
+        ));
+        assert!(opening(
+            "Portail",
+            "position",
+            Some(Semantic::Other),
+            false,
+            &Value::Int(40)
+        ));
+        assert!(!opening(
+            "Portail",
+            "position",
+            Some(Semantic::Other),
+            false,
+            &Value::Int(0)
+        ));
     }
 }
