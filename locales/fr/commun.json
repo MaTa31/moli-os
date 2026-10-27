@@ -227,6 +227,7 @@
   "commun.code.nouveau_choisir": "Choisir un nouveau code",
   "commun.lampe.temperature": "Température de {label}",
   "commun.kelvin": "{n} K",
+  "commun.lampe.temperature_valeur": "{n} K, {nom}",
   "commun.lampe.blanc_tres_chaud": "Blanc très chaud",
   "commun.lampe.blanc_jour": "Lumière du jour",
   "commun.lampe.blanc_bleute": "Blanc bleuté",

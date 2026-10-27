@@ -3,16 +3,25 @@
    * A range slider that stays smooth under the finger: while it is held, nothing
    * reactive changes (the fill is painted straight on the element), and the
    * value is only reported on release. A new `value` from outside is applied
-   * once the slider is let go.
+   * once the slider is let go, and again on release (a lamp that rounds or
+   * refuses the value puts the slider back where the lamp is).
    *
    * tone: « level » fills up to the thumb; « kelvin » shows warm to cold whites.
+   * valuetext: the value in words for screen readers (« 2700 K, warm white »).
    */
-  let { min, max, step = 1, value, label, tone = 'level', onlive = null, oncommit } = $props();
+  let { min, max, step = 1, value, label, tone = 'level', valuetext = null, onlive = null, oncommit } = $props();
 
   let el = $state();
-  let held = false;
+  let held = $state(false);
+  // The value under the finger when it came down: a release without a move
+  // sends no `change`, so the slider is let go there.
+  let start = null;
 
-  const paint = () => el?.style.setProperty('--p', `${((Number(el.value) - min) / (max - min)) * 100}%`);
+  const paint = () => {
+    if (!el) return;
+    el.style.setProperty('--p', `${max > min ? ((Number(el.value) - min) / (max - min)) * 100 : 100}%`);
+    if (valuetext) el.setAttribute('aria-valuetext', valuetext(Number(el.value)));
+  };
 
   $effect(() => {
     if (el && !held) {
@@ -30,6 +39,17 @@
     held = false;
     oncommit(Number(el.value));
   }
+
+  function press() {
+    held = true;
+    start = el.value;
+  }
+
+  // Released (or the pointer lost): when the value moved, `change` follows and
+  // lets go; when it did not, nothing follows, so let go here.
+  function release() {
+    if (held && el.value === start) held = false;
+  }
 </script>
 
 <input
@@ -40,7 +60,9 @@
   {max}
   {step}
   aria-label={label}
-  onpointerdown={() => (held = true)}
+  onpointerdown={press}
+  onpointerup={release}
+  onlostpointercapture={release}
   onpointercancel={() => (held = false)}
   oninput={live}
   onchange={commit} />
@@ -114,8 +136,13 @@
     outline-offset: 6px;
   }
 
+  /* One rule per engine: a selector list holding the other engine's
+     pseudo-element is dropped whole. */
   @media (prefers-reduced-motion: reduce) {
-    .slider::-webkit-slider-thumb,
+    .slider::-webkit-slider-thumb {
+      transition: none;
+    }
+
     .slider::-moz-range-thumb {
       transition: none;
     }

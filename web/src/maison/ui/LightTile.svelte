@@ -128,10 +128,12 @@
   // The whites as a slider too, in kelvin over the lamp's own range (a point in
   // mireds counts the other way round: its max is the warmest white).
   const inMireds = $derived(tempPoint && (tempPoint.unit === 'mired' || (tempPoint.kind?.max ?? 0) <= 1000));
+  // No slider when the range is of no use: missing, empty, or 0 mired (no kelvin).
   const kelvinRange = $derived.by(() => {
     const kind = tempPoint?.kind;
-    if (!kind || kind.min == null || kind.max == null) return null;
-    return inMireds ? [Math.ceil(1e6 / kind.max), Math.floor(1e6 / kind.min)] : [kind.min, kind.max];
+    if (!kind || !(kind.min > 0) || !(kind.max > kind.min)) return null;
+    const range = inMireds ? [Math.ceil(1e6 / kind.max), Math.floor(1e6 / kind.min)] : [kind.min, kind.max];
+    return range[1] > range[0] ? range : null;
   });
   const kelvinNow = $derived.by(() => {
     const v = value(id, 'color_temp');
@@ -153,6 +155,7 @@
       sentK = null;
     }, 4000);
   }
+  $effect(() => () => clearTimeout(sentTimer));
   $effect(() => {
     level;
     sentLevel = null;
@@ -198,7 +201,7 @@
         <Slider
           min={1}
           max={100}
-          value={level ?? 100}
+          value={sentLevel ?? level ?? 100}
           label={t('commun.lampe.luminosite', { label })}
           oncommit={(v) => {
             sent(v, null);
@@ -229,8 +232,9 @@
               min={kelvinRange[0]}
               max={kelvinRange[1]}
               step={50}
-              value={kelvinNow ?? 4000}
+              value={sentK ?? kelvinNow ?? 4000}
               label={t('commun.lampe.temperature', { label })}
+              valuetext={(k) => t('commun.lampe.temperature_valeur', { n: k, nom: whiteName(k) })}
               oncommit={(k) => {
                 sent(null, k);
                 white(k);

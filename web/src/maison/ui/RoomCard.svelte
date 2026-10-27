@@ -83,7 +83,7 @@
     const out = [];
     const v = (k) => value(d.id, k);
     if (v('smoke') === true) out.push({ tone: 'alert', icon: 'smoke', text: t('commun.capteur.fumee') });
-    if (v('carbon_monoxide') === true || v('co') === true) out.push({ tone: 'alert', icon: 'smoke', text: t('commun.capteur.monoxyde') });
+    if (v('carbon_monoxide') === true) out.push({ tone: 'alert', icon: 'smoke', text: t('commun.capteur.monoxyde') });
     if (leak(d.id)) out.push({ tone: 'alert', icon: 'water-alert', text: t('commun.piece.fuite', { name: nameOf(d.id) }) });
     const open = doorOpen(d.id);
     if (open === true) out.push({ tone: 'warm', icon: 'door-open', text: '', title: t('commun.piece.ouverte', { name: nameOf(d.id) }) });
@@ -93,7 +93,7 @@
     if (typeof hum === 'number') out.push(measure('humidity', hum, t('commun.capteur.humidite'), t('commun.pourcent', { n: num(hum) })));
     const co2 = v('co2_value') ?? v('co2');
     if (typeof co2 === 'number') out.push(measure('co2', co2, 'CO₂', `${num(co2)} ppm`));
-    const co = v('carbon_monoxide_value');
+    const co = v('co');
     if (typeof co === 'number') out.push(measure('co', co, t('commun.capteur.monoxyde'), `${num(co)} ppm`));
     const lx = v('illuminance') ?? v('illuminance_lux');
     if (typeof lx === 'number') out.push({ tone: '', icon: 'sun', text: `${num(lx)} lx`, title: t('commun.piece.eclairement') });
