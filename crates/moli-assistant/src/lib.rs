@@ -250,6 +250,8 @@ struct Inner {
     automations: std::sync::RwLock<Option<moli_automation::Automations>>,
     /// The weather the dashboard shows (« actualise la météo » forgets what it kept).
     weather: std::sync::RwLock<Option<moli_weather::Weather>>,
+    /// When the model last made the weather forget what it kept (a floor: see `refresh_weather`).
+    weather_refreshed: Mutex<Option<Instant>>,
     /// Orders and reminders for later (in memory: a restart forgets them).
     planned: std::sync::Mutex<Vec<house_tools::Planned>>,
     /// A Home Assistant import is running.
@@ -425,6 +427,7 @@ impl Assistant {
             prefs_path: std::sync::RwLock::new(None),
             automations: std::sync::RwLock::new(None),
             weather: std::sync::RwLock::new(None),
+            weather_refreshed: Mutex::new(None),
             planned: std::sync::Mutex::default(),
             importing: std::sync::atomic::AtomicBool::new(false),
             imported: Mutex::default(),

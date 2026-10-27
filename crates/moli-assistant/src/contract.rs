@@ -127,11 +127,17 @@ pub(crate) fn prompt(
     protected: &[String],
     inventory: &str,
 ) -> anyhow::Result<String> {
+    let one_line = crate::house::one_line;
     let protected = if protected.is_empty() {
         "aucune".to_owned()
     } else {
-        protected.join(", ")
+        protected
+            .iter()
+            .map(|p| one_line(p))
+            .collect::<Vec<_>>()
+            .join(", ")
     };
+    let rooms: Vec<String> = rooms.iter().map(|r| one_line(r)).collect();
     Ok(format!(
         "Contrat Moli v{}. Tu pilotes la maison par appels d'outils.\nPièces : {}.\nPièces protégées : {}.\nAppareils :\n{}",
         version()?,

@@ -374,10 +374,15 @@ impl Config {
             effective.search_model = String::new();
             // The cloud voice would go to the chat provider: a model at home has
             // none (Ollama answers neither), so the local voices (Whisper, Piper)
-            // serve, and the status does not claim a cloud voice.
+            // serve, and the status does not claim a cloud voice. Only the defaults
+            // go: a voice model set by hand is the owner's choice.
             if chat.endpoint.at_home() {
-                effective.transcribe_model = String::new();
-                effective.speech_model = String::new();
+                if effective.transcribe_model == crate::default_transcribe() {
+                    effective.transcribe_model = String::new();
+                }
+                if effective.speech_model == crate::default_speech_model() {
+                    effective.speech_model = String::new();
+                }
             }
         }
         Ok((effective, providers))
@@ -577,6 +582,11 @@ chat = "local"
         let defaults = cfg("");
         assert_eq!(away.transcribe_model, defaults.transcribe_model);
         assert_eq!(away.speech_model, defaults.speech_model);
+        // A voice model set by hand stays.
+        let chosen = LOCAL.replace("[[provider]]", "speech_model = \"ma-voix\"\n\n[[provider]]");
+        let (mine, _) = cfg(&chosen).resolved().unwrap();
+        assert_eq!(mine.speech_model, "ma-voix");
+        assert!(mine.transcribe_model.is_empty());
         // The old single provider is left as it was.
         let (legacy, _) = cfg("base_url = \"http://127.0.0.1:11434/v1\"")
             .resolved()

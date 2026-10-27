@@ -421,7 +421,11 @@ impl Assistant {
         let Some(weather) = weather else {
             return moli_i18n::tr!("assistant.house.weather_unavailable");
         };
-        weather.forget().await;
+        // A floor: the model may call it several times a turn, the service is not asked
+        // again within a few minutes (what is kept is fresh enough to say « à jour »).
+        if self.may_refresh_weather() {
+            weather.forget().await;
+        }
         match weather.forecast().await {
             Ok(_) => moli_i18n::tr!("assistant.house.weather_refreshed"),
             Err(e) => {
@@ -429,6 +433,20 @@ impl Assistant {
                 moli_i18n::tr!("assistant.house.weather_unavailable")
             }
         }
+    }
+
+    /// Whether the weather may forget what it kept now: once every [`WEATHER_FLOOR`].
+    fn may_refresh_weather(&self) -> bool {
+        let mut last = self
+            .0
+            .weather_refreshed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if last.is_some_and(|t| t.elapsed() < WEATHER_FLOOR) {
+            return false;
+        }
+        *last = Some(std::time::Instant::now());
+        true
     }
 
     /// A request for a driver, written where the outside agent reads it
@@ -488,6 +506,11 @@ impl Assistant {
                 .await
                 .is_ok_and(|m| m.len() > MAX_REQUESTS_FILE)
             {
+                tracing::warn!(
+                    file,
+                    max_bytes = MAX_REQUESTS_FILE,
+                    "requests file is full: this request and the next ones are dropped until the agent empties it"
+                );
                 return Err(std::io::Error::other(format!("{file} is full")));
             }
             let mut file = tokio::fs::OpenOptions::new()
@@ -661,6 +684,8 @@ pub(crate) fn same(now: &moli_core::Value, asked: &Json) -> bool {
     }
 }
 
+/// The weather service is asked again at most this often by « actualise la météo ».
+const WEATHER_FLOOR: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 /// Calls of one answer carried out, at most (« allume le salon et ferme le volet »).
 const MAX_CALLS: usize = 4;
 /// Exchanges of the thread the model is shown before the question, and their length.
@@ -1689,6 +1714,14 @@ pub(crate) mod tests {
             assert_eq!(reply.reply, unknown());
             assert!(!path.with_file_name("driver-requests.jsonl").exists());
         }
+    }
+
+    #[tokio::test]
+    async fn the_weather_is_forgotten_once_every_few_minutes_at_most() {
+        let (moli, _) = house_model(vec![]).await;
+        assert!(moli.may_refresh_weather(), "the first time");
+        assert!(!moli.may_refresh_weather(), "again within the floor");
+        assert!(!moli.may_refresh_weather());
     }
 
     #[tokio::test]
