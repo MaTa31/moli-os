@@ -272,18 +272,8 @@ fn flatten(
             ("composite", Some(p)) => format!("{prefix}{p}."),
             _ => prefix.to_owned(),
         };
-        let first = points.len();
         for feature in &expose.features {
             flatten(feature, &prefix, points, codecs);
-        }
-        // A lock's state is true when locked: not a switch to turn off (the guard asks a
-        // person before an agent opens it).
-        if expose.kind == "lock" {
-            for point in &mut points[first..] {
-                if point.kind == Kind::Binary && &*point.key == "state" {
-                    point.semantic = Semantic::Lock;
-                }
-            }
         }
         return;
     }
