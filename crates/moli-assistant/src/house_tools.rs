@@ -1736,6 +1736,11 @@ mod tests {
             "on, then the colour"
         );
         assert_eq!(reply.actions[0].value, json!(true));
+        assert_eq!(
+            reply.actions[0].before,
+            Some(json!(false)),
+            "« Défaire » puts it back off"
+        );
         // a level of zero is no wish to light it
         hub.command(
             &"fake:Ruban/state".into(),
