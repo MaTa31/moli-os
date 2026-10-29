@@ -131,11 +131,13 @@ numérotés `d1…dN` et leurs points) et les 25 outils du contrat (`tools/model
     demande depuis le tableau de bord.
 - **« Pas ça » : corriger une réponse, et que Moli s'en souvienne.** Sous chaque réponse du modèle
   maison, le tableau de bord offre « Pas ça » : « Défaire » remet la valeur d'avant des ordres du tour
-  (dans l'ordre inverse, ce qui n'a pas répondu peut être réessayé), puis la personne choisit pièce →
+  (dans l'ordre inverse, ce qui n'a pas répondu peut être réessayé), **seulement là où la valeur est
+  encore celle que Moli a écrite** : ce qui a changé depuis (à la main, par quelqu'un, par un
+  automatisme) est laissé tel quel, et la réponse le dit. Puis la personne choisit pièce →
   appareil → action (ou : lire, l'heure, la météo, ne rien faire), parmi ce que Moli lui propose
   (`choices`) ; le choix renvoyé est contrôlé contre cette liste. « Retenir pour la prochaine fois »
-  garde une **règle** (`assistant-rules.json`, 500 au plus) qui répond **avant** le modèle quand la
-  même phrase revient.
+  garde une **règle** (`assistant-rules.json`, 500 au plus, numéros aléatoires qui ne reviennent
+  jamais, même après un redémarrage) qui répond **avant** le modèle quand la même phrase revient.
   - Une règle passe par le même chemin que le modèle (`house_call`) : même garde (pièces protégées,
     heures calmes, validations), mêmes refus (réglages, « plus tard », autre pièce, ouverture).
   - Seule une session humaine (`Origin::Ui`, le code) corrige, retient, désactive ou supprime une

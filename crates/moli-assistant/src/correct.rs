@@ -223,22 +223,54 @@ impl Assistant {
         if undo.is_empty() {
             return Ok(moli_i18n::tr!("assistant.correct.nothing_to_undo"));
         }
-        let (mut done, mut held) = (0_usize, 0_usize);
+        let (mut done, mut held, mut changed) = (0_usize, 0_usize, 0_usize);
         let mut failed = Vec::new();
-        // Last first: two orders on one point end on the value it had before the first.
-        for (point, before) in undo.iter().rev() {
+        // One order per point: the value it had before the first, the value Moli wrote last;
+        // the points the turn touched last are put back first.
+        let mut points: Vec<crate::corrections::Undo> = Vec::new();
+        for order in &undo {
+            match points.iter().position(|u| u.point == order.point) {
+                Some(i) => {
+                    let mut kept = points.remove(i);
+                    kept.written.clone_from(&order.written);
+                    points.push(kept);
+                }
+                None => points.push(order.clone()),
+            }
+        }
+        for order in points.iter().rev() {
+            // Changed since (by hand, by someone, by an automation): theirs, left as it is.
+            let now = order.point.split().and_then(|(d, key)| {
+                self.0
+                    .hub
+                    .device(&d)?
+                    .state
+                    .get(key)
+                    .map(|s| s.value.clone())
+            });
+            if let Some(now) = now
+                && !crate::house_model::same(&now, &order.written)
+            {
+                changed += 1;
+                continue;
+            }
             let by = actor.clone().or_else(|| Some("Moli".into()));
             match self
                 .0
                 .hub
-                .command(point, Value::from_json(before), Origin::Assistant, by)
+                .command(
+                    &order.point,
+                    Value::from_json(&order.before),
+                    Origin::Assistant,
+                    by,
+                )
                 .await
             {
                 Ok(()) => done += 1,
                 Err(moli_runtime::CommandError::NeedsApproval { .. }) => held += 1,
                 Err(e) => {
-                    tracing::warn!(point = %point, error = %e, "an order could not be put back");
-                    failed.push((point.clone(), before.clone()));
+                    tracing::warn!(point = %order.point, error = %e, "an order could not be put back");
+                    failed.push(order.clone());
                 }
             }
         }
@@ -254,10 +286,17 @@ impl Assistant {
                 turned.undo.clone_from(&failed);
             }
         }
-        self.journal(
-            &json!({ "kind": "undo", "put_back": done, "held": held, "failed": failed.len() }),
-        );
+        self.journal(&json!({
+            "kind": "undo", "put_back": done, "held": held, "changed": changed, "failed": failed.len(),
+        }));
         let mut said = moli_i18n::tr!("assistant.correct.undone", count = done);
+        if changed > 0 {
+            said.push(' ');
+            said.push_str(&moli_i18n::tr!(
+                "assistant.correct.undo_changed",
+                count = changed
+            ));
+        }
         if held > 0 {
             said.push(' ');
             said.push_str(&moli_i18n::tr!("assistant.house.all_held", count = held));
@@ -983,9 +1022,9 @@ mod tests {
             ("set", r#"{"point":"d1/on","value":true}"#),
             ("set", r#"{"point":"d1/on","value":false}"#),
         ]);
-        let (moli, _) = house_model_over(crate::tests::lamp_hub().await, vec![&two]).await;
-        // the lamp starts off: on, then off again; put back in reverse it ends as it started
-        let reply = moli.turn(ask("Allume puis éteins")).await.unwrap();
+        let once = call("set", r#"{"point":"d1/on","value":true}"#);
+        let (moli, _) =
+            house_model_over(crate::tests::lamp_hub().await, vec![&two, &once, &once]).await;
         let on = || {
             moli.0
                 .hub
@@ -995,20 +1034,61 @@ mod tests {
                 .get("on")
                 .map(|s| s.value.clone())
         };
-        moli.0
-            .hub
-            .command(&"fake:lamp/on".into(), Value::Bool(true), Origin::Ui, None)
+        let set = |v: bool| {
+            let hub = moli.0.hub.clone();
+            async move {
+                hub.command(&"fake:lamp/on".into(), Value::Bool(v), Origin::Ui, None)
+                    .await
+                    .unwrap();
+            }
+        };
+        // The lamp starts off. Two orders on one point (on, then off): one order put back, to
+        // the value before the first.
+        let reply = moli.turn(ask("Allume puis éteins")).await.unwrap();
+        let said = moli
+            .undo_turn(reply.turn_id, Origin::Ui, None)
             .await
             .unwrap();
-        moli.undo_turn(reply.turn_id, Origin::Ui, None)
-            .await
-            .unwrap();
+        assert_eq!(said, moli_i18n::tr!("assistant.correct.undone", count = 1));
         assert_eq!(on(), Some(Value::Bool(false)));
+        // Untouched since Moli lit it: put back off.
+        let reply = moli.turn(ask("Allume")).await.unwrap();
+        assert_eq!(on(), Some(Value::Bool(true)));
+        let said = moli
+            .undo_turn(reply.turn_id, Origin::Ui, None)
+            .await
+            .unwrap();
+        assert_eq!(said, moli_i18n::tr!("assistant.correct.undone", count = 1));
+        assert_eq!(on(), Some(Value::Bool(false)));
+        // Moli lights it, then a person switches it off by hand: no longer what Moli wrote,
+        // so « Défaire » leaves it (nothing sent) and says so.
+        let reply = moli.turn(ask("Allume")).await.unwrap();
+        set(false).await;
+        let sent_before = moli.0.hub.journal(100).len();
+        let said = moli
+            .undo_turn(reply.turn_id, Origin::Ui, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            moli.0.hub.journal(100).len(),
+            sent_before,
+            "nothing was sent"
+        );
+        assert_eq!(
+            said,
+            moli_i18n::tr!("assistant.correct.undone", count = 0)
+                + " "
+                + &moli_i18n::tr!("assistant.correct.undo_changed", count = 1)
+        );
 
         let stuck = moli.remember_turn(crate::corrections::Turned {
             question: "x".into(),
             context: Vec::new(),
-            undo: vec![("fake:ghost/on".into(), json!(true))],
+            undo: vec![crate::corrections::Undo {
+                point: "fake:ghost/on".into(),
+                before: json!(true),
+                written: json!(false),
+            }],
             at: std::time::Instant::now(),
         });
         let said = moli.undo_turn(stuck, Origin::Ui, None).await.unwrap();

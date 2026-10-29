@@ -244,6 +244,7 @@
   "assistant.correct.nothing_to_undo": "There is nothing to put back for this turn.",
   "assistant.correct.rule_set": "“{device}”: {key} = {value}",
   "assistant.correct.rule_read": "Read “{device}”",
+  "assistant.correct.undo_changed": "{count} changed since (by hand or by someone): I leave them as they are.",
   "assistant.correct.undo_failed": "{count} could not be put back (offline?): you can try again.",
   "assistant.correct.not_kept_unnamed": "Not kept: this sentence names no device. For a rule, pick “the whole room” or several devices.",
   "assistant.correct.not_kept_level": "Not kept: a level picked from steps does not hold for a sentence without a number.",

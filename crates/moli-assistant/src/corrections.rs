@@ -108,14 +108,40 @@ pub(crate) struct Turned {
     pub(crate) question: String,
     /// The exchanges the model was shown before the question, as (role, text).
     pub(crate) context: Vec<(String, String)>,
-    /// Each point the turn commanded and the value it held before.
-    pub(crate) undo: Vec<(moli_core::PointId, Json)>,
+    /// Each order the turn carried out: what « Défaire » may put back.
+    pub(crate) undo: Vec<Undo>,
     pub(crate) at: std::time::Instant,
+}
+
+/// An order of a turn: its point, the value it held before, and the value Moli wrote. « Défaire »
+/// only puts `before` back while the point still holds `written`: what changed since is someone's.
+#[derive(Clone, Debug)]
+pub(crate) struct Undo {
+    pub(crate) point: moli_core::PointId,
+    pub(crate) before: Json,
+    pub(crate) written: Json,
 }
 
 /// Turns kept, and for how long (« Défaire » is for what just happened).
 const MAX_TURNS: usize = 50;
 pub(crate) const TURN_LIFETIME: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// A number nobody can guess or count to, kept whole by a browser (below 2^52), not 0 and not
+/// `taken`: for turns, and for rules (a number never comes back, not even after a restart).
+fn random_id(taken: impl Fn(u64) -> bool) -> u64 {
+    let random = ring::rand::SystemRandom::new();
+    loop {
+        let mut bytes = [0_u8; 8];
+        let id = if ring::rand::SecureRandom::fill(&random, &mut bytes).is_ok() {
+            u64::from_le_bytes(bytes) & ((1 << 52) - 1)
+        } else {
+            moli_core::now_ms()
+        };
+        if id != 0 && !taken(id) {
+            return id;
+        }
+    }
+}
 
 impl crate::Assistant {
     /// Keeps a turn for a correction; returns its number: random, kept whole by a browser (below 2^52),
@@ -127,18 +153,7 @@ impl crate::Assistant {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         turns.retain(|(_, t)| t.at.elapsed() < TURN_LIFETIME);
-        let random = ring::rand::SystemRandom::new();
-        let id = loop {
-            let mut bytes = [0_u8; 8];
-            let id = if ring::rand::SecureRandom::fill(&random, &mut bytes).is_ok() {
-                u64::from_le_bytes(bytes) & ((1 << 52) - 1)
-            } else {
-                moli_core::now_ms()
-            };
-            if id != 0 && !turns.iter().any(|(i, _)| *i == id) {
-                break id;
-            }
-        };
+        let id = random_id(|id| turns.iter().any(|(i, _)| *i == id));
         turns.push_back((id, turned));
         while turns.len() > MAX_TURNS {
             turns.pop_front();
@@ -260,11 +275,17 @@ impl crate::Assistant {
                 )
             })
             .collect();
-        let undo: Vec<(moli_core::PointId, Json)> = reply
+        let undo: Vec<Undo> = reply
             .actions
             .iter()
             .filter(|a| a.status == "done")
-            .filter_map(|a| a.before.clone().map(|b| (a.point.clone(), b)))
+            .filter_map(|a| {
+                a.before.clone().map(|before| Undo {
+                    point: a.point.clone(),
+                    before,
+                    written: a.value.clone(),
+                })
+            })
             .collect();
         reply.house = true;
         reply.undoable = !undo.is_empty();
@@ -294,7 +315,6 @@ impl crate::Assistant {
 pub(crate) struct Rules {
     path: Option<PathBuf>,
     list: Vec<Rule>,
-    next: u64,
 }
 
 impl Rules {
@@ -309,17 +329,14 @@ impl Rules {
                     return Self {
                         path: None,
                         list: Vec::new(),
-                        next: 1,
                     };
                 }
             },
             Err(_) => Vec::new(),
         };
-        let next = list.iter().map(|r| r.id).max().unwrap_or(0) + 1;
         Self {
             path: Some(path.to_owned()),
             list,
-            next,
         }
     }
 
@@ -345,8 +362,8 @@ impl Rules {
     /// Keeps a rule; the same sentence replaces the older rule. Returns its id.
     pub(crate) fn upsert(&mut self, mut rule: Rule) -> u64 {
         self.list.retain(|r| r.key != rule.key);
-        rule.id = self.next;
-        self.next += 1;
+        // Random, never counted: a tab left open on an old rule never reaches a new one.
+        rule.id = random_id(|id| self.list.iter().any(|r| r.id == id));
         let id = rule.id;
         self.list.push(rule);
         if self.list.len() > MAX_RULES {
@@ -373,13 +390,12 @@ impl Rules {
     }
 
     /// What `restore` puts back when a change could not be written down.
-    pub(crate) fn snapshot(&self) -> (Vec<Rule>, u64) {
-        (self.list.clone(), self.next)
+    pub(crate) fn snapshot(&self) -> Vec<Rule> {
+        self.list.clone()
     }
 
-    pub(crate) fn restore(&mut self, (list, next): (Vec<Rule>, u64)) {
+    pub(crate) fn restore(&mut self, list: Vec<Rule>) {
         self.list = list;
-        self.next = next;
     }
 
     /// The rule for a sentence: the same sentence, or one a typo away (at most one edit in a word,
@@ -537,9 +553,14 @@ mod tests {
         assert!(!again.list()[0].enabled);
         assert!(again.remove(id));
         assert!(!again.remove(id));
-        // ids keep counting after a restart: no id is ever reused
-        let next = again.upsert(rule("autre phrase"));
-        assert!(next > id);
+        // The last rule removed, written down, Moli restarted: its number never comes back.
+        again.save().unwrap();
+        let mut restarted = Rules::load(&path);
+        let ids: Vec<u64> = (0..20)
+            .map(|n| restarted.upsert(rule(&format!("phrase {n}"))))
+            .collect();
+        assert!(!ids.contains(&id), "{id} reused");
+        assert!(ids.iter().all(|i| *i != 0 && *i < 1 << 52));
     }
 
     #[test]
@@ -846,8 +867,9 @@ mod applied_tests {
         let turned = moli.turn_of(reply.turn_id).expect("the turn is kept");
         assert_eq!(turned.question, "Allume la lampe");
         assert_eq!(turned.undo.len(), 1);
-        assert_eq!(turned.undo[0].0.as_str(), "fake:lamp/on");
-        assert_eq!(turned.undo[0].1, json!(false));
+        assert_eq!(turned.undo[0].point.as_str(), "fake:lamp/on");
+        assert_eq!(turned.undo[0].before, json!(false));
+        assert_eq!(turned.undo[0].written, json!(true));
         assert!(moli.turn_of(reply.turn_id + 12345).is_none());
     }
 

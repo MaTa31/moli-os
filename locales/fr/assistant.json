@@ -244,6 +244,7 @@
   "assistant.correct.nothing_to_undo": "Il n’y a rien à remettre pour ce tour.",
   "assistant.correct.rule_set": "« {device} » : {key} = {value}",
   "assistant.correct.rule_read": "Lire « {device} »",
+  "assistant.correct.undo_changed": "{count} ont changé depuis (à la main ou par quelqu’un) : je n’y touche pas.",
   "assistant.correct.undo_failed": "{count} n’ont pas pu être remis (hors ligne ?) : tu peux réessayer.",
   "assistant.correct.not_kept_unnamed": "Pas retenu : cette phrase ne nomme aucun appareil. Pour une règle, choisis « toute la pièce » ou plusieurs appareils.",
   "assistant.correct.not_kept_level": "Pas retenu : un niveau choisi parmi des paliers ne vaut pas pour une phrase sans chiffre.",
